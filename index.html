@@ -2,61 +2,182 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Pixel Snake</title>
+<title>Pixel Snake — Improved</title>
 <style>
-body { background: #000; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; image-rendering: pixelated; }
-canvas { border: 4px solid #333; image-rendering: pixelated; }
+body { background: #0a0a12; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; image-rendering: pixelated; font-family: 'Courier New', monospace; }
+canvas { border: 6px solid #2a2a4a; border-radius: 4px; image-rendering: pixelated; box-shadow: 0 0 40px #0f0a; }
+#ui { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); color: #0f0; font-size: 18px; text-shadow: 0 0 8px #0f0; pointer-events: none; }
 </style>
 </head>
 <body>
-<canvas id="game" width="400" height="400"></canvas>
+<div id="ui">Score: <span id="score">0</span> | Best: <span id="best">0</span></div>
+<canvas id="game" width="480" height="480"></canvas>
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
+const GRID = 24;
+const CELL = 20;
+const COLS = 24;
+const ROWS = 24;
 
-const grid = 20;
-let snake = [{x: 10, y: 10}];
-let dir = {x: 1, y: 0};
-let food = {x: 15, y: 15};
-let score = 0;
-let gameOver = false;
+let snake, dir, nextDir, food, score, best, state, particles, tick;
 
-function drawPixel(x, y, color) {
-  ctx.fillStyle = color;
-  ctx.fillRect(x * grid, y * grid, grid-1, grid-1);
+function reset() {
+  snake = [{x:12,y:12},{x:11,y:12},{x:10,y:12}];
+  dir = {x:1,y:0};
+  nextDir = {...dir};
+  food = spawnFood();
+  score = 0;
+  state = 'play';
+  particles = [];
+  tick = 0;
+  updateUI();
 }
 
-function loop() {
-  if (gameOver) return;
+function spawnFood() {
+  let f;
+  do {
+    f = {x: Math.floor(Math.random()*COLS), y: Math.floor(Math.random()*ROWS)};
+  } while (snake.some(s => s.x===f.x && s.y===f.y));
+  return f;
+}
+
+function updateUI() {
+  document.getElementById('score').textContent = score;
+  best = Math.max(best || 0, score);
+  localStorage.setItem('snakeBest', best);
+  document.getElementById('best').textContent = best;
+}
+
+function drawPixel(x, y, color, size=CELL-2) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x*CELL +1, y*CELL +1, size, size);
+}
+
+function addParticles(x, y, color, n=8) {
+  for (let i=0; i<n; i++) {
+    particles.push({
+      x: x*CELL + CELL/2, y: y*CELL + CELL/2,
+      vx: (Math.random()-0.5)*4, vy: (Math.random()-0.5)*4,
+      life: 20, color
+    });
+  }
+}
+
+function draw() {
+  // Background grid
+  ctx.fillStyle = '#0d0d18';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle = '#1a1a2e';
+  ctx.lineWidth = 1;
+  for (let i=0; i<=COLS; i++) {
+    ctx.beginPath(); ctx.moveTo(i*CELL,0); ctx.lineTo(i*CELL,ROWS*CELL); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,i*CELL); ctx.lineTo(COLS*CELL,i*CELL); ctx.stroke();
+  }
+
+  // Food (glowing)
+  ctx.shadowColor = '#f44';
+  ctx.shadowBlur = 12;
+  drawPixel(food.x, food.y, '#f44');
+  ctx.shadowBlur = 0;
+
+  // Snake
+  snake.forEach((s, i) => {
+    const bright = i === 0 ? '#4f4' : `hsl(120, 80%, ${40 + (1-i/snake.length)*30}%)`;
+    drawPixel(s.x, s.y, bright);
+    if (i === 0) { // Eyes
+      ctx.fillStyle = '#000';
+      const ox = dir.x === 0 ? 4 : dir.x > 0 ? 12 : 2;
+      const oy = dir.y === 0 ? 4 : dir.y > 0 ? 12 : 2;
+      ctx.fillRect(s.x*CELL + ox, s.y*CELL + 5, 3, 3);
+      ctx.fillRect(s.x*CELL + ox, s.y*CELL + 12, 3, 3);
+    }
+  });
+
+  // Particles
+  particles.forEach((p, i) => {
+    p.x += p.vx; p.y += p.vy; p.life--;
+    ctx.globalAlpha = p.life / 20;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, 3, 3);
+    if (p.life <= 0) particles.splice(i, 1);
+  });
+  ctx.globalAlpha = 1;
+
+  if (state === 'start') {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#0f0';
+    ctx.font = 'bold 32px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('PIXEL SNAKE', 240, 200);
+    ctx.font = '18px monospace';
+    ctx.fillText('Arrow keys to move', 240, 250);
+    ctx.fillText('Press SPACE to start', 240, 290);
+  }
+  if (state === 'over') {
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#f44';
+    ctx.font = 'bold 36px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', 240, 200);
+    ctx.fillStyle = '#0f0';
+    ctx.font = '20px monospace';
+    ctx.fillText('Score: ' + score + '  Best: ' + best, 240, 250);
+    ctx.fillText('SPACE to retry', 240, 300);
+  }
+}
+
+function update() {
+  if (state !== 'play') return;
+  tick++;
+  if (tick % 8 !== 0) return; // Speed control
+
+  dir = nextDir;
   const head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
-  if (head.x < 0 || head.x >= 20 || head.y < 0 || head.y >= 20 || snake.some(s => s.x === head.x && s.y === head.y)) {
-    gameOver = true;
-    alert('Game Over! Score: ' + score);
-    location.reload();
+
+  if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS ||
+      snake.some(s => s.x === head.x && s.y === head.y)) {
+    state = 'over';
+    addParticles(head.x, head.y, '#f44', 20);
     return;
   }
+
   snake.unshift(head);
   if (head.x === food.x && head.y === food.y) {
     score++;
-    food = {x: Math.floor(Math.random()*20), y: Math.floor(Math.random()*20)};
+    addParticles(food.x, food.y, '#ff0', 15);
+    food = spawnFood();
+    updateUI();
   } else {
     snake.pop();
   }
-  ctx.fillStyle = '#111';
-  ctx.fillRect(0,0,400,400);
-  snake.forEach((s,i) => drawPixel(s.x, s.y, i===0 ? '#0f0' : '#0a0'));
-  drawPixel(food.x, food.y, '#f00');
-  setTimeout(loop, 150);
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
 }
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'ArrowUp' && dir.y === 0) dir = {x:0,y:-1};
-  if (e.key === 'ArrowDown' && dir.y === 0) dir = {x:0,y:1};
-  if (e.key === 'ArrowLeft' && dir.x === 0) dir = {x:-1,y:0};
-  if (e.key === 'ArrowRight' && dir.x === 0) dir = {x:1,y:0};
+  if (state === 'start' && e.code === 'Space') { state = 'play'; return; }
+  if (state === 'over' && e.code === 'Space') { reset(); state = 'play'; return; }
+  if (state !== 'play') return;
+
+  const nd = {...nextDir};
+  if (e.key === 'ArrowUp' && dir.y === 0) nd = {x:0,y:-1};
+  if (e.key === 'ArrowDown' && dir.y === 0) nd = {x:0,y:1};
+  if (e.key === 'ArrowLeft' && dir.x === 0) nd = {x:-1,y:0};
+  if (e.key === 'ArrowRight' && dir.x === 0) nd = {x:1,y:0};
+  nextDir = nd;
 });
 
+best = parseInt(localStorage.getItem('snakeBest') || '0');
+state = 'start';
+reset();
 loop();
 </script>
 </body>
